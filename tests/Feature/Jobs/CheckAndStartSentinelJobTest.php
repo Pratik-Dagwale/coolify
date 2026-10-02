@@ -1,11 +1,49 @@
 <?php
 
+use App\Actions\Server\StartSentinel;
+use App\Jobs\CheckAndStartSentinelJob;
+use App\Models\PrivateKey;
 use App\Models\Server;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Process;
+use Illuminate\Support\Facades\Storage;
 
 uses(RefreshDatabase::class);
+
+it('inspects a running Sentinel with the appropriate privileges without restarting it', function (string $sshUser, string $inspectCommand) {
+    DB::table('instance_settings')->insert(['id' => 0]);
+    config(['constants.ssh.mux_enabled' => false]);
+    $user = User::factory()->create();
+    $teamId = $user->teams()->first()->id;
+    Storage::fake('ssh-keys');
+    $privateKey = PrivateKey::factory()->create(['team_id' => $teamId]);
+    $server = Server::factory()->create([
+        'team_id' => $teamId,
+        'user' => $sshUser,
+        'private_key_id' => $privateKey->id,
+    ]);
+    Http::preventStrayRequests();
+    Http::fake([
+        config('constants.coolify.versions_url') => Http::response([
+            'coolify' => ['sentinel' => ['version' => '1.0.0']],
+        ]),
+    ]);
+    Process::fake([
+        '*docker inspect coolify-sentinel*' => Process::result(output: '[{"State":{"Status":"running"}}]'),
+        '*docker exec coolify-sentinel*' => Process::result(output: '1.0.0'),
+    ])->preventStrayProcesses();
+    StartSentinel::shouldRun()->never();
+
+    (new CheckAndStartSentinelJob($server))->handle();
+
+    Process::assertRan(fn ($process) => str_contains($process->command, "\n{$inspectCommand}\n"));
+})->with([
+    'non-root SSH user' => ['cooluser', 'sudo docker inspect coolify-sentinel'],
+    'root SSH user' => ['root', 'docker inspect coolify-sentinel'],
+]);
 
 it('treats Sentinel as enabled for regular servers even when the legacy flag and metrics are disabled', function () {
     DB::table('instance_settings')->insert(['id' => 0]);

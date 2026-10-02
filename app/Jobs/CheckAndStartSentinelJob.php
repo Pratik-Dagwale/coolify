@@ -28,7 +28,7 @@ class CheckAndStartSentinelJob implements ShouldBeEncrypted, ShouldQueue
         $latestVersion = get_latest_sentinel_version();
 
         // Check if sentinel is running
-        $sentinelFound = instant_remote_process_with_timeout(['docker inspect coolify-sentinel'], $this->server, false, 10);
+        $sentinelFound = instant_remote_process_with_timeout(['docker inspect coolify-sentinel'], $this->server, false);
         $sentinelFoundJson = json_decode($sentinelFound, true);
         $sentinelStatus = data_get($sentinelFoundJson, '0.State.Status', 'exited');
         if ($sentinelStatus !== 'running') {
